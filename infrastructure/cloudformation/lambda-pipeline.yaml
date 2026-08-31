@@ -1,0 +1,323 @@
+# FILE: cloudsentinel-zero-trust/infrastructure/cloudformation/lambda-pipeline.yaml
+# ════════════════════════════════════════════════════════════════════════
+# CloudSentinel Zero-Trust — Lambda Pipeline Stack
+# Depends on: main.yaml (cross-stack imports)
+# Resources: Lambda Function, S3 Trigger, EventBridge Rule, SQS DLQ,
+#            CloudWatch Log Group, Lambda Layer
+# ════════════════════════════════════════════════════════════════════════
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CloudSentinel Zero-Trust — Lambda pipeline stack.
+  Deploys normalizer Lambda with S3 trigger, EventBridge watcher,
+  SQS FIFO DLQ, and supporting resources.
+
+# ──────────────────────────────────────────────────────────────────────
+# PARAMETERS
+# ──────────────────────────────────────────────────────────────────────
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: cloudsentinel
+    AllowedPattern: "^[a-z0-9-]+$"
+
+  LambdaCodeS3Bucket:
+    Type: String
+    Description: >-
+      S3 bucket containing the Lambda deployment package (ZIP).
+      Use the models bucket or create a dedicated deploy bucket.
+
+  LambdaCodeS3Key:
+    Type: String
+    Default: "lambda/cloudsentinel-pipeline.zip"
+    Description: S3 key for the Lambda deployment ZIP.
+
+  LambdaLayerS3Key:
+    Type: String
+    Default: "lambda/layers/cloudsentinel-deps-layer.zip"
+    Description: S3 key for the Lambda layer ZIP (scikit-learn, pandas, etc.).
+
+# ──────────────────────────────────────────────────────────────────────
+# RESOURCES
+# ──────────────────────────────────────────────────────────────────────
+Resources:
+
+  # ════════════════════════════════════════════════════════════════════
+  # SQS DEAD LETTER QUEUE (FIFO, KMS-encrypted)
+  # ════════════════════════════════════════════════════════════════════
+  # FIFO DLQ captures failed S3 events for manual inspection.
+  # Using .fifo suffix as required by SQS FIFO.
+  PipelineDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-pipeline-dlq.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      # Messages retained 14 days for investigation
+      MessageRetentionPeriod: 1209600
+      VisibilityTimeout: 300
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Project
+          Value: CloudSentinel
+
+  # ════════════════════════════════════════════════════════════════════
+  # LAMBDA LAYER — Dependencies (scikit-learn, pandas, opensearch-py)
+  # ════════════════════════════════════════════════════════════════════
+  # Layer built externally via `make build-layer` and uploaded to S3.
+  # Contains: scikit-learn, pandas, numpy, opensearch-py, pydantic,
+  #           joblib, requests-aws4auth
+  DependenciesLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub "${EnvironmentName}-deps-layer"
+      Description: "scikit-learn, pandas, numpy, opensearch-py, pydantic, joblib"
+      CompatibleRuntimes:
+        - python3.12
+      CompatibleArchitectures:
+        - x86_64
+      Content:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaLayerS3Key
+
+  # ════════════════════════════════════════════════════════════════════
+  # LAMBDA FUNCTION — CloudSentinel Pipeline Normalizer
+  # ════════════════════════════════════════════════════════════════════
+
+  PipelineLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${EnvironmentName}-pipeline"
+      Description: >-
+        CloudSentinel pipeline: extract CloudTrail from S3, normalize to ECS,
+        enrich, detect anomalies (Isolation Forest + rules), alert via SNS.
+      Runtime: python3.12
+      Architectures:
+        - x86_64
+      Handler: lambda_handler.handler
+      # 512MB required for scikit-learn model inference + pandas transforms
+      MemorySize: 512
+      # 5 minutes: handles large CloudTrail batches and bulk OpenSearch inserts
+      Timeout: 300
+      Role:
+        Fn::ImportValue: !Sub "${EnvironmentName}-lambda-role-arn"
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Layers:
+        - !Ref DependenciesLayer
+      VpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: !Sub "${EnvironmentName}-private-subnet-1"
+          - Fn::ImportValue: !Sub "${EnvironmentName}-private-subnet-2"
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub "${EnvironmentName}-sg-lambda"
+      Environment:
+        Variables:
+          # All sensitive values resolved at runtime via SSM; these are safe config keys
+          SSM_PREFIX: "/cloudsentinel"
+          ENVIRONMENT: !Ref EnvironmentName
+          POWERTOOLS_SERVICE_NAME: cloudsentinel-pipeline
+          # OpenSearch endpoint loaded from SSM at runtime (not hardcoded)
+          OPENSEARCH_ENDPOINT_SSM: "/cloudsentinel/opensearch/endpoint"
+          SNS_TOPIC_ARN_SSM: "/cloudsentinel/sns/topic-arn"
+          MODEL_BUCKET_SSM: "/cloudsentinel/model/bucket"
+          MODEL_KEY_SSM: "/cloudsentinel/model/key-prefix"
+          ANOMALY_THRESHOLD_SSM: "/cloudsentinel/model/anomaly-threshold"
+          LOG_LEVEL_SSM: "/cloudsentinel/pipeline/log-level"
+          BATCH_SIZE_SSM: "/cloudsentinel/pipeline/batch-size"
+      TracingConfig:
+        Mode: Active
+      DeadLetterConfig:
+        TargetArn: !GetAtt PipelineDLQ.Arn
+      Tags:
+        - Key: Project
+          Value: CloudSentinel
+
+  # ── Lambda permission: allow S3 to invoke ──
+  LambdaInvokePermissionS3:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PipelineLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref "AWS::AccountId"
+      SourceArn:
+        Fn::ImportValue: !Sub "${EnvironmentName}-logs-bucket-arn"
+
+  # ── Lambda permission: allow EventBridge to invoke ──
+  LambdaInvokePermissionEventBridge:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PipelineLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AnomalyWatcherRule.Arn
+
+  # ════════════════════════════════════════════════════════════════════
+  # S3 EVENT NOTIFICATION — Trigger Lambda on new CloudTrail delivery
+  # ════════════════════════════════════════════════════════════════════
+  # NOTE: S3 bucket notifications cannot be set via a separate stack
+  # on a bucket defined in another stack using standard CloudFormation.
+  # The deploy.sh script configures this via AWS CLI after both stacks deploy:
+  #   aws s3api put-bucket-notification-configuration ...
+  # This avoids circular dependencies between main.yaml and this stack.
+
+  # ════════════════════════════════════════════════════════════════════
+  # EVENTBRIDGE RULE — Periodic anomaly score watcher (every 5 minutes)
+  # ════════════════════════════════════════════════════════════════════
+  AnomalyWatcherRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${EnvironmentName}-anomaly-watcher"
+      Description: >-
+        Invokes pipeline Lambda every 5 minutes to check for
+        high-score anomalies that may need aggregated alerting.
+      ScheduleExpression: "rate(5 minutes)"
+      State: ENABLED
+      Targets:
+        - Id: PipelineLambdaTarget
+          Arn: !GetAtt PipelineLambdaFunction.Arn
+          Input: '{"source": "eventbridge", "detail-type": "anomaly-watcher"}'
+
+  # ════════════════════════════════════════════════════════════════════
+  # CLOUDWATCH LOG GROUP — Lambda execution logs (30 day retention)
+  # ════════════════════════════════════════════════════════════════════
+  PipelineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${EnvironmentName}-pipeline"
+      RetentionInDays: 30
+      Tags:
+        - Key: Project
+          Value: CloudSentinel
+
+  # ════════════════════════════════════════════════════════════════════
+  # CLOUDWATCH ALARMS — DLQ depth alarm (immediate notification)
+  # ════════════════════════════════════════════════════════════════════
+  DLQDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-dlq-messages"
+      AlarmDescription: >-
+        Triggers when Dead Letter Queue has messages, indicating
+        pipeline failures requiring investigation.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt PipelineDLQ.QueueName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - Fn::ImportValue: !Sub "${EnvironmentName}-alert-sns-topic-arn"
+      OKActions:
+        - Fn::ImportValue: !Sub "${EnvironmentName}-alert-sns-topic-arn"
+      TreatMissingData: notBreaching
+
+  # ── Lambda error rate alarm (>5% in 5 minutes) ──
+  LambdaErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-lambda-error-rate"
+      AlarmDescription: "Lambda error rate exceeds 5% over 5 minutes"
+      Metrics:
+        - Id: errors
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Errors
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref PipelineLambdaFunction
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: invocations
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Invocations
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref PipelineLambdaFunction
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: error_rate
+          Expression: "IF(invocations > 0, errors / invocations * 100, 0)"
+          Label: ErrorRate
+          ReturnData: true
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - Fn::ImportValue: !Sub "${EnvironmentName}-alert-sns-topic-arn"
+      TreatMissingData: notBreaching
+
+  # ── SQS policy: allow Lambda DLQ target ──
+  DLQPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref PipelineDLQ
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowLambdaDLQ
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt PipelineDLQ.Arn
+            Condition:
+              ArnEquals:
+                "aws:SourceArn": !GetAtt PipelineLambdaFunction.Arn
+
+# ──────────────────────────────────────────────────────────────────────
+# OUTPUTS
+# ──────────────────────────────────────────────────────────────────────
+Outputs:
+  LambdaFunctionArn:
+    Description: Pipeline Lambda function ARN
+    Value: !GetAtt PipelineLambdaFunction.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-pipeline-lambda-arn"
+
+  LambdaFunctionName:
+    Description: Pipeline Lambda function name
+    Value: !Ref PipelineLambdaFunction
+    Export:
+      Name: !Sub "${EnvironmentName}-pipeline-lambda-name"
+
+  DLQUrl:
+    Description: Dead Letter Queue URL
+    Value: !Ref PipelineDLQ
+    Export:
+      Name: !Sub "${EnvironmentName}-dlq-url"
+
+  DLQArn:
+    Description: Dead Letter Queue ARN
+    Value: !GetAtt PipelineDLQ.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-dlq-arn"
+
+  DependenciesLayerArn:
+    Description: Lambda dependencies layer ARN
+    Value: !Ref DependenciesLayer
+    Export:
+      Name: !Sub "${EnvironmentName}-deps-layer-arn"
+
+  LogGroupName:
+    Description: Lambda CloudWatch Log Group name
+    Value: !Ref PipelineLogGroup
+    Export:
+      Name: !Sub "${EnvironmentName}-pipeline-log-group"
+
+  AnomalyWatcherRuleArn:
+    Description: EventBridge anomaly watcher rule ARN
+    Value: !GetAtt AnomalyWatcherRule.Arn
+    Export:
+      Name: !Sub "${EnvironmentName}-anomaly-watcher-rule-arn"

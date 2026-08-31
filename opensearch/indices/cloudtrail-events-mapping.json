@@ -1,0 +1,181 @@
+{
+  "index_patterns": ["cloudsentinel-events-*"],
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0,
+        "refresh_interval": "5s",
+        "mapping": {
+          "total_fields": { "limit": 2000 }
+        },
+        "codec": "best_compression",
+        "sort.field": ["@timestamp"],
+        "sort.order": ["desc"]
+      },
+      "plugins.index_state_management.rollover_alias": "cloudsentinel-events"
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+
+        "@timestamp": {
+          "type": "date",
+          "format": "strict_date_optional_time||epoch_millis"
+        },
+        "message": {
+          "type": "text",
+          "norms": false
+        },
+        "tags": {
+          "type": "keyword"
+        },
+        "labels": {
+          "type": "object",
+          "dynamic": true
+        },
+
+        "event": {
+          "properties": {
+            "kind": { "type": "keyword" },
+            "category": { "type": "keyword" },
+            "type": { "type": "keyword" },
+            "action": {
+              "type": "keyword",
+              "fields": {
+                "text": { "type": "text", "analyzer": "standard" }
+              }
+            },
+            "provider": { "type": "keyword" },
+            "outcome": { "type": "keyword" },
+            "id": { "type": "keyword" },
+            "original": {
+              "type": "text",
+              "index": false,
+              "doc_values": false
+            },
+            "severity": { "type": "integer" },
+            "created": {
+              "type": "date",
+              "format": "strict_date_optional_time||epoch_millis"
+            }
+          }
+        },
+
+        "user": {
+          "properties": {
+            "id": { "type": "keyword" },
+            "name": {
+              "type": "keyword",
+              "fields": {
+                "text": { "type": "text", "analyzer": "standard" }
+              }
+            },
+            "roles": { "type": "keyword" },
+            "domain": { "type": "keyword" }
+          }
+        },
+
+        "related": {
+          "properties": {
+            "user": { "type": "keyword" },
+            "ip": { "type": "ip" }
+          }
+        },
+
+        "source": {
+          "properties": {
+            "ip": { "type": "ip" },
+            "address": { "type": "keyword" },
+            "geo": {
+              "properties": {
+                "country_iso_code": { "type": "keyword" },
+                "city_name": { "type": "keyword" },
+                "region_name": { "type": "keyword" },
+                "location": { "type": "geo_point" }
+              }
+            }
+          }
+        },
+
+        "cloud": {
+          "properties": {
+            "provider": { "type": "keyword" },
+            "account": {
+              "properties": {
+                "id": { "type": "keyword" }
+              }
+            },
+            "region": { "type": "keyword" },
+            "service": {
+              "properties": {
+                "name": { "type": "keyword" }
+              }
+            }
+          }
+        },
+
+        "aws": {
+          "properties": {
+            "cloudtrail": {
+              "type": "object",
+              "dynamic": true
+            }
+          }
+        },
+
+        "cloudsentinel": {
+          "properties": {
+            "anomaly_score": {
+              "type": "integer",
+              "doc_values": true
+            },
+            "is_anomaly": {
+              "type": "boolean"
+            },
+            "contributing_features": {
+              "type": "nested",
+              "properties": {
+                "feature": { "type": "keyword" },
+                "impact": { "type": "float" },
+                "value": { "type": "float" }
+              }
+            },
+            "confidence": {
+              "type": "float"
+            },
+            "rule_matches": {
+              "type": "keyword"
+            },
+            "rule_severities": {
+              "type": "keyword"
+            },
+            "mitre_tactics": {
+              "type": "keyword"
+            },
+            "mitre_techniques": {
+              "type": "keyword"
+            },
+            "ip_classification": {
+              "type": "keyword"
+            },
+            "geo_risk_score": {
+              "type": "float"
+            },
+            "api_risk_score": {
+              "type": "float"
+            }
+          }
+        }
+      }
+    }
+  },
+  "priority": 200,
+  "composed_of": [],
+  "version": 1,
+  "_meta": {
+    "description": "CloudSentinel Zero-Trust — ECS 8.10+ CloudTrail events index template",
+    "schema_version": "1.0.0",
+    "managed_by": "cloudsentinel"
+  }
+}

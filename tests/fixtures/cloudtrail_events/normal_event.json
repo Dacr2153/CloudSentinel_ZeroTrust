@@ -1,0 +1,21 @@
+{
+  "eventVersion": "1.08",
+  "eventSource": "ec2.amazonaws.com",
+  "eventName": "DescribeInstances",
+  "awsRegion": "us-east-1",
+  "sourceIPAddress": "10.0.1.50",
+  "userAgent": "console.amazonaws.com",
+  "eventID": "evt-fixture-normal",
+  "eventTime": "2026-03-10T14:30:00Z",
+  "eventType": "AwsApiCall",
+  "userIdentity": {
+    "type": "IAMUser",
+    "accountId": "123456789012",
+    "arn": "arn:aws:iam::123456789012:user/developer",
+    "userName": "developer"
+  },
+  "requestParameters": {},
+  "responseElements": null,
+  "readOnly": true,
+  "recipientAccountId": "123456789012"
+}

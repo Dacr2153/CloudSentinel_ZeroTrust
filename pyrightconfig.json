@@ -1,0 +1,39 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.14",
+  "pythonPlatform": "Linux",
+
+  "include": [
+    "src",
+    "ml",
+    "tests",
+    "cloudsentinel.py",
+    "tools"
+  ],
+  "exclude": [
+    ".venv",
+    "**/__pycache__",
+    "**/*.pyc",
+    ".ruff_cache",
+    ".pytest_cache",
+    "ml/data/local",
+    "ml/data/cloudtrail_samples"
+  ],
+
+  "typeCheckingMode": "basic",
+
+  "reportMissingImports": true,
+  "reportMissingModuleSource": "none",
+  "reportUndefinedVariable": true,
+  "reportGeneralTypeIssues": "warning",
+  "reportOptionalMemberAccess": "warning",
+  "reportAttributeAccessIssue": "warning",
+  "reportIndexIssue": "warning",
+  "reportReturnType": "warning",
+  "reportArgumentType": "warning",
+  "reportCallIssue": "warning",
+
+  "useLibraryCodeForTypes": true,
+  "extraPaths": ["."]
+}

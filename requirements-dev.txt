@@ -1,0 +1,31 @@
+# FILE: cloudsentinel-zero-trust/requirements-dev.txt
+# Development & testing dependencies (includes all production deps)
+-r requirements.txt
+
+# Training data generation & evaluation
+matplotlib>=3.8.0,<4.0.0
+fastparquet>=2024.2.0
+
+# Testing
+pytest>=8.0.0,<10.0.0
+pytest-cov>=4.1.0,<6.0.0
+pytest-mock>=3.12.0,<4.0.0
+pytest-asyncio>=0.23.0,<1.0.0
+moto[s3,sns,ssm,iam,sts]>=5.0.0,<6.0.0
+
+# Linting & formatting
+ruff>=0.3.0,<2.0.0
+
+# Type checking
+mypy>=1.8.0,<3.0.0
+pyright>=1.1.390
+boto3-stubs[s3,sns,ssm,iam,sts]>=1.34.0,<2.0.0
+
+# Security scanning
+bandit>=1.7.0,<3.0.0
+
+# CloudFormation linting (optional — requires cfn-lint binary)
+cfn-lint>=0.86.0,<2.0.0
+
+# Data (pyarrow requires cmake to build from source on Python 3.14 — use parquet via pandas)
+pandas>=2.1.0,<3.0.0

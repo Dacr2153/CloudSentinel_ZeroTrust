@@ -1,0 +1,26 @@
+{
+  "eventVersion": "1.08",
+  "eventSource": "signin.amazonaws.com",
+  "eventName": "ConsoleLogin",
+  "awsRegion": "us-east-1",
+  "sourceIPAddress": "72.21.198.66",
+  "userAgent": "Mozilla/5.0",
+  "eventID": "evt-fixture-root-login",
+  "eventTime": "2026-03-10T02:15:00Z",
+  "eventType": "AwsConsoleSignIn",
+  "userIdentity": {
+    "type": "Root",
+    "accountId": "123456789012",
+    "arn": "arn:aws:iam::123456789012:root",
+    "userName": "Root"
+  },
+  "additionalEventData": {
+    "MFAUsed": "No",
+    "LoginTo": "https://console.aws.amazon.com/console/home"
+  },
+  "responseElements": {
+    "ConsoleLogin": "Success"
+  },
+  "readOnly": false,
+  "recipientAccountId": "123456789012"
+}

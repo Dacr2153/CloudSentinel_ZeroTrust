@@ -1,0 +1,70 @@
+# FILE: cloudsentinel-zero-trust/.gitignore
+# CloudSentinel Zero-Trust — Git Ignore Rules
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+.eggs/
+
+# ── Virtual Environments ──
+venv/
+.venv/
+env/
+ENV/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── Testing ──
+.pytest_cache/
+htmlcov/
+coverage.xml
+.coverage
+*.cover
+
+# ── Type Checking / Linting ──
+.mypy_cache/
+.ruff_cache/
+
+# ── Build Artifacts ──
+lambda-package.zip
+*.zip
+
+# ── Environment Variables ──
+.env
+.env.local
+.env.*.local
+
+# ── AWS ──
+samconfig.toml
+.aws-sam/
+
+# ── OS Files ──
+Thumbs.db
+desktop.ini
+
+# ── Security Reports ──
+bandit-report.json
+safety-report.json
+
+# ── ML Model Artifacts ──
+*.joblib
+*.pkl
+*.pickle
+ml_training/output/
+
+# ── Logs ──
+*.log
+logs/

@@ -1,0 +1,143 @@
+{
+  "index_patterns": ["cloudsentinel-alerts-*"],
+  "template": {
+    "settings": {
+      "index": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0,
+        "refresh_interval": "5s",
+        "mapping": {
+          "total_fields": { "limit": 500 }
+        },
+        "codec": "best_compression",
+        "sort.field": ["@timestamp"],
+        "sort.order": ["desc"]
+      },
+      "plugins.index_state_management.rollover_alias": "cloudsentinel-alerts"
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+
+        "@timestamp": {
+          "type": "date",
+          "format": "strict_date_optional_time||epoch_millis"
+        },
+
+        "alert_id": {
+          "type": "keyword"
+        },
+        "dedup_hash": {
+          "type": "keyword"
+        },
+
+        "severity": {
+          "type": "keyword"
+        },
+        "title": {
+          "type": "text",
+          "fields": {
+            "keyword": { "type": "keyword", "ignore_above": 256 }
+          }
+        },
+        "description": {
+          "type": "text"
+        },
+
+        "status": {
+          "type": "keyword",
+          "doc_values": true
+        },
+        "assignee": {
+          "type": "keyword"
+        },
+        "resolved_at": {
+          "type": "date",
+          "format": "strict_date_optional_time||epoch_millis"
+        },
+        "mttd_seconds": {
+          "type": "integer"
+        },
+
+        "campaign_id": {
+          "type": "keyword"
+        },
+
+        "anomaly_score": {
+          "type": "integer"
+        },
+        "is_anomaly": {
+          "type": "boolean"
+        },
+        "contributing_features": {
+          "type": "nested",
+          "properties": {
+            "feature": { "type": "keyword" },
+            "impact": { "type": "float" },
+            "value": { "type": "float" }
+          }
+        },
+
+        "rules": {
+          "type": "nested",
+          "properties": {
+            "rule_id": { "type": "keyword" },
+            "rule_name": {
+              "type": "text",
+              "fields": {
+                "keyword": { "type": "keyword", "ignore_above": 128 }
+              }
+            },
+            "severity": { "type": "keyword" },
+            "mitre_tactic": { "type": "keyword" },
+            "mitre_technique": { "type": "keyword" },
+            "evidence": {
+              "type": "object",
+              "dynamic": true
+            }
+          }
+        },
+
+        "event": {
+          "properties": {
+            "id": { "type": "keyword" },
+            "action": { "type": "keyword" }
+          }
+        },
+
+        "user": {
+          "properties": {
+            "name": {
+              "type": "keyword",
+              "fields": {
+                "text": { "type": "text" }
+              }
+            }
+          }
+        },
+
+        "source": {
+          "properties": {
+            "ip": { "type": "ip" }
+          }
+        },
+
+        "cloud": {
+          "properties": {
+            "region": { "type": "keyword" },
+            "account_id": { "type": "keyword" }
+          }
+        }
+      }
+    }
+  },
+  "priority": 200,
+  "composed_of": [],
+  "version": 1,
+  "_meta": {
+    "description": "CloudSentinel Zero-Trust — Security alerts index template",
+    "schema_version": "1.0.0",
+    "managed_by": "cloudsentinel",
+    "retention": "1 year via ISM policy"
+  }
+}

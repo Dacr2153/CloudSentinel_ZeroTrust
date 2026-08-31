@@ -1,0 +1,221 @@
+# FILE: cloudsentinel-zero-trust/monitoring/alarms.yaml
+# ════════════════════════════════════════════════════════════════════════
+# CloudSentinel Zero-Trust — CloudWatch Alarms (CloudFormation)
+# 6 critical alarms: error rate, pipeline lag, OS health, DLQ, FPR, model
+# ════════════════════════════════════════════════════════════════════════
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CloudSentinel — CloudWatch Alarms for operational and ML health monitoring.
+  All alarms notify via SNS for immediate response.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: cloudsentinel
+
+  LambdaFunctionName:
+    Type: String
+    Default: cloudsentinel-pipeline
+
+  AlertSNSTopicArn:
+    Type: String
+    Description: SNS Topic ARN for alarm notifications
+
+  EC2InstanceId:
+    Type: String
+    Default: ""
+    Description: OpenSearch EC2 instance ID
+
+Resources:
+  # ──────────────────────────────────────────────────────────────────────
+  # ALARM 1: Lambda Error Rate > 5% in 5 minutes
+  # Detects pipeline failures before they cascade into data loss.
+  # Uses math expression: (Errors / Invocations) * 100
+  # ──────────────────────────────────────────────────────────────────────
+  LambdaErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-lambda-error-rate"
+      AlarmDescription: >-
+        Lambda error rate exceeds 5% over 5 minutes.
+        Investigate CloudWatch Logs and DLQ for failed events.
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 5
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertSNSTopicArn
+      OKActions:
+        - !Ref AlertSNSTopicArn
+      Metrics:
+        - Id: errors
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Errors
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref LambdaFunctionName
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: invocations
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Invocations
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref LambdaFunctionName
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: error_rate
+          Expression: "IF(invocations > 0, (errors / invocations) * 100, 0)"
+          Label: "Error Rate (%)"
+          ReturnData: true
+
+  # ──────────────────────────────────────────────────────────────────────
+  # ALARM 2: Pipeline Lag > 90 seconds
+  # SLA breach warning — MTTD target is 120s, so 90s lag leaves no room.
+  # ──────────────────────────────────────────────────────────────────────
+  PipelineLagAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-pipeline-lag"
+      AlarmDescription: >-
+        Pipeline lag exceeds 90 seconds (MTTD SLA breach warning).
+        Check Lambda duration, S3 event delivery, and OpenSearch indexing.
+      Namespace: CloudSentinel
+      MetricName: PipelineLagSeconds
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 90
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Period: 60
+      Statistic: Average
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertSNSTopicArn
+      OKActions:
+        - !Ref AlertSNSTopicArn
+
+  # ──────────────────────────────────────────────────────────────────────
+  # ALARM 3: OpenSearch Cluster Unhealthy
+  # Health metric: 2=green, 1=yellow, 0=red.
+  # Single-node cluster: yellow is normal (no replicas), red is critical.
+  # Triggers if health < 1 (red) for 3 consecutive minutes.
+  # ──────────────────────────────────────────────────────────────────────
+  OpenSearchClusterUnhealthyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-opensearch-unhealthy"
+      AlarmDescription: >-
+        OpenSearch cluster health is RED for 3+ minutes.
+        Check EC2 instance, disk space, and JVM heap.
+        See runbook section 6 for troubleshooting steps.
+      Namespace: CloudSentinel
+      MetricName: OpenSearchClusterHealth
+      ComparisonOperator: LessThanThreshold
+      Threshold: 1
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Period: 60
+      Statistic: Minimum
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref AlertSNSTopicArn
+      OKActions:
+        - !Ref AlertSNSTopicArn
+
+  # ──────────────────────────────────────────────────────────────────────
+  # ALARM 4: DLQ Messages > 0 (immediate)
+  # Any message in the DLQ means a pipeline processing failure.
+  # Immediate notification for investigation.
+  # ──────────────────────────────────────────────────────────────────────
+  DLQMessagesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-dlq-messages"
+      AlarmDescription: >-
+        Dead Letter Queue has messages — pipeline processing failure detected.
+        Inspect DLQ messages and Lambda CloudWatch Logs immediately.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !Sub "${EnvironmentName}-pipeline-dlq.fifo"
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Period: 60
+      Statistic: Maximum
+      TreatMissingData: missing
+      AlarmActions:
+        - !Ref AlertSNSTopicArn
+
+  # ──────────────────────────────────────────────────────────────────────
+  # ALARM 5: False Positive Rate > 5% in 1-hour window
+  # ML model quality gate — FPR > 5% indicates model drift or
+  # threshold misconfiguration. Consider retraining.
+  # ──────────────────────────────────────────────────────────────────────
+  FPRBreachAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-fpr-breach"
+      AlarmDescription: >-
+        False positive rate exceeds 5% over 1-hour window.
+        Review threshold in SSM (/cloudsentinel/anomaly_threshold)
+        or retrain with 'make train'. See runbook sections 3-4.
+      Namespace: CloudSentinel
+      MetricName: FalsePositiveRate
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 5
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Period: 3600
+      Statistic: Average
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertSNSTopicArn
+
+  # ──────────────────────────────────────────────────────────────────────
+  # ALARM 6: Model Staleness > 7 days
+  # Models degrade over time as threat patterns evolve.
+  # Weekly retraining cadence ensures the model stays current.
+  # ──────────────────────────────────────────────────────────────────────
+  ModelStalenessAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-model-staleness"
+      AlarmDescription: >-
+        ML model has not been retrained in 7+ days.
+        Risk of model drift — run 'make train' to retrain
+        with recent data. See runbook section 4.
+      Namespace: CloudSentinel
+      MetricName: ModelAgeDays
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 7
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Period: 86400
+      Statistic: Maximum
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertSNSTopicArn
+
+Outputs:
+  LambdaErrorRateAlarmArn:
+    Value: !GetAtt LambdaErrorRateAlarm.Arn
+  PipelineLagAlarmArn:
+    Value: !GetAtt PipelineLagAlarm.Arn
+  OpenSearchHealthAlarmArn:
+    Value: !GetAtt OpenSearchClusterUnhealthyAlarm.Arn
+  DLQAlarmArn:
+    Value: !GetAtt DLQMessagesAlarm.Arn
+  FPRBreachAlarmArn:
+    Value: !GetAtt FPRBreachAlarm.Arn
+  ModelStalenessAlarmArn:
+    Value: !GetAtt ModelStalenessAlarm.Arn

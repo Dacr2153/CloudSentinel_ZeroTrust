@@ -1,0 +1,284 @@
+# FILE: cloudsentinel-zero-trust/monitoring/cloudwatch_dashboards.yaml
+# ════════════════════════════════════════════════════════════════════════
+# CloudSentinel Zero-Trust — CloudWatch Dashboard (CloudFormation)
+# Deploys as nested stack or standalone:
+#   aws cloudformation deploy --template-file cloudwatch_dashboards.yaml \
+#     --stack-name cloudsentinel-cw-dashboard
+# ════════════════════════════════════════════════════════════════════════
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CloudSentinel — CloudWatch Dashboard for operational observability.
+  Covers Lambda pipeline, ML detections, EC2/OpenSearch, and KPI tracking.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: cloudsentinel
+
+  LambdaFunctionName:
+    Type: String
+    Default: cloudsentinel-pipeline
+
+  EC2InstanceId:
+    Type: String
+    Default: ""
+    Description: OpenSearch EC2 instance ID (for CW Agent metrics)
+
+Resources:
+  CloudSentinelDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${EnvironmentName}-operations"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "text",
+              "x": 0, "y": 0, "width": 24, "height": 1,
+              "properties": {
+                "markdown": "# CloudSentinel Zero-Trust — Operations Dashboard\n**Environment**: ${EnvironmentName} | **Region**: ${AWS::Region}"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 1, "width": 8, "height": 6,
+              "properties": {
+                "title": "Lambda Invocations & Errors",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Sum",
+                "metrics": [
+                  ["AWS/Lambda", "Invocations", "FunctionName", "${LambdaFunctionName}", {"color": "#2196F3", "label": "Invocations"}],
+                  ["AWS/Lambda", "Errors", "FunctionName", "${LambdaFunctionName}", {"color": "#F44336", "label": "Errors"}],
+                  ["AWS/Lambda", "Throttles", "FunctionName", "${LambdaFunctionName}", {"color": "#FF9800", "label": "Throttles"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8, "y": 1, "width": 8, "height": 6,
+              "properties": {
+                "title": "Lambda Duration (p50 / p95 / p99)",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 60,
+                "metrics": [
+                  ["AWS/Lambda", "Duration", "FunctionName", "${LambdaFunctionName}", {"stat": "p50", "color": "#4CAF50", "label": "p50"}],
+                  ["AWS/Lambda", "Duration", "FunctionName", "${LambdaFunctionName}", {"stat": "p95", "color": "#FF9800", "label": "p95"}],
+                  ["AWS/Lambda", "Duration", "FunctionName", "${LambdaFunctionName}", {"stat": "p99", "color": "#F44336", "label": "p99"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16, "y": 1, "width": 8, "height": 6,
+              "properties": {
+                "title": "Lambda Concurrent Executions",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Maximum",
+                "metrics": [
+                  ["AWS/Lambda", "ConcurrentExecutions", "FunctionName", "${LambdaFunctionName}", {"color": "#9C27B0"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 7, "width": 8, "height": 6,
+              "properties": {
+                "title": "Pipeline — Events Processed",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Sum",
+                "metrics": [
+                  ["CloudSentinel", "EventsExtracted", {"color": "#2196F3", "label": "Extracted"}],
+                  ["CloudSentinel", "EventsNormalized", {"color": "#4CAF50", "label": "Normalized"}],
+                  ["CloudSentinel", "EventsIngested", {"color": "#009688", "label": "Ingested"}],
+                  ["CloudSentinel", "ProcessingErrors", {"color": "#F44336", "label": "Errors"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8, "y": 7, "width": 8, "height": 6,
+              "properties": {
+                "title": "Detections — Anomalies, Rules & Alerts",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Sum",
+                "metrics": [
+                  ["CloudSentinel", "AnomaliesDetected", {"color": "#FF9800", "label": "ML Anomalies"}],
+                  ["CloudSentinel", "RulesMatched", {"color": "#9C27B0", "label": "Rules Matched"}],
+                  ["CloudSentinel", "AlertsDispatched", {"color": "#F44336", "label": "Alerts Dispatched"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16, "y": 7, "width": 8, "height": 6,
+              "properties": {
+                "title": "Pipeline Lag (seconds)",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 60,
+                "metrics": [
+                  ["CloudSentinel", "PipelineLagSeconds", {"stat": "Average", "color": "#FF5722", "label": "Lag (avg)"}],
+                  ["CloudSentinel", "PipelineLagSeconds", {"stat": "p99", "color": "#F44336", "label": "Lag (p99)"}]
+                ],
+                "annotations": {
+                  "horizontal": [
+                    {"color": "#F44336", "label": "SLA Breach (90s)", "value": 90}
+                  ]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 13, "width": 12, "height": 6,
+              "properties": {
+                "title": "MTTD Trend (seconds) — Target < 120s",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "metrics": [
+                  ["CloudSentinel", "MTTDSeconds", {"stat": "Average", "color": "#2196F3", "label": "MTTD (avg)"}],
+                  ["CloudSentinel", "MTTDSeconds", {"stat": "Maximum", "color": "#F44336", "label": "MTTD (max)"}]
+                ],
+                "annotations": {
+                  "horizontal": [
+                    {"color": "#F44336", "label": "Target (120s)", "value": 120, "fill": "above"}
+                  ]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 13, "width": 12, "height": 6,
+              "properties": {
+                "title": "False Positive Rate (%) — Target < 5%",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 3600,
+                "stat": "Average",
+                "metrics": [
+                  ["CloudSentinel", "FalsePositiveRate", {"color": "#FF9800", "label": "FPR (%)"}]
+                ],
+                "annotations": {
+                  "horizontal": [
+                    {"color": "#F44336", "label": "Limit (5%)", "value": 5, "fill": "above"}
+                  ]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 19, "width": 8, "height": 6,
+              "properties": {
+                "title": "EC2 (OpenSearch) — CPU Utilization",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Average",
+                "metrics": [
+                  ["AWS/EC2", "CPUUtilization", "InstanceId", "${EC2InstanceId}", {"color": "#2196F3"}]
+                ],
+                "annotations": {
+                  "horizontal": [
+                    {"color": "#F44336", "label": "High (80%)", "value": 80}
+                  ]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8, "y": 19, "width": 8, "height": 6,
+              "properties": {
+                "title": "EC2 — Memory Usage (CW Agent)",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Average",
+                "metrics": [
+                  ["CWAgent", "mem_used_percent", "InstanceId", "${EC2InstanceId}", {"color": "#9C27B0"}]
+                ],
+                "annotations": {
+                  "horizontal": [
+                    {"color": "#F44336", "label": "High (85%)", "value": 85}
+                  ]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16, "y": 19, "width": 8, "height": 6,
+              "properties": {
+                "title": "EC2 — Disk Usage (CW Agent)",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 300,
+                "stat": "Average",
+                "metrics": [
+                  ["CWAgent", "disk_used_percent", "InstanceId", "${EC2InstanceId}", "path", "/", "device", "xvda1", "fstype", "xfs", {"color": "#FF5722"}]
+                ],
+                "annotations": {
+                  "horizontal": [
+                    {"color": "#F44336", "label": "Critical (90%)", "value": 90}
+                  ]
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0, "y": 25, "width": 12, "height": 6,
+              "properties": {
+                "title": "OpenSearch — Cluster Health & Indexing",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 60,
+                "metrics": [
+                  ["CloudSentinel", "OpenSearchIndexingRate", {"stat": "Average", "color": "#4CAF50", "label": "Indexing rate/min"}],
+                  ["CloudSentinel", "OpenSearchClusterHealth", {"stat": "Average", "color": "#2196F3", "label": "Health (0=red,1=yellow,2=green)", "yAxis": "right"}]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12, "y": 25, "width": 12, "height": 6,
+              "properties": {
+                "title": "DLQ — Dead Letter Queue Messages",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "period": 60,
+                "stat": "Maximum",
+                "metrics": [
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${EnvironmentName}-pipeline-dlq.fifo", {"color": "#F44336"}]
+                ]
+              }
+            }
+          ]
+        }
+
+Outputs:
+  DashboardURL:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${EnvironmentName}-operations"
+  DashboardName:
+    Description: Dashboard Name
+    Value: !Sub "${EnvironmentName}-operations"
